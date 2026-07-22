@@ -72,9 +72,12 @@ class KoreanPIIGuardrail(CustomGuardrail):
                 labels = ", ".join(
                     f"{e}({_ENTITY_LABELS.get(e, e)})" for e in result.block_entities
                 )
+                # litellm ProxyException 은 openai_code 를 응답 본문에 노출하지 않고
+                # code 엔 HTTP 상태(400)를 넣는다(라이브 확인). 클라이언트가 PII 차단을
+                # 기계적으로 식별할 수 있도록 안정 마커 'pii_blocked' 를 메시지에 포함한다.
                 raise ProxyException(
                     message=(
-                        f"요청에 차단 대상 민감정보가 포함되어 있습니다: {labels}. "
+                        f"[pii_blocked] 요청에 차단 대상 민감정보가 포함되어 있습니다: {labels}. "
                         "해당 값을 제거한 뒤 다시 시도하세요."
                     ),
                     type="invalid_request_error",

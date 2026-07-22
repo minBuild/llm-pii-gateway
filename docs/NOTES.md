@@ -15,11 +15,14 @@
 - 차단: `litellm.proxy._types.ProxyException(message, type, param, code, openai_code=...)`.
   오프라인 훅 호출에서 `openai_code="pii_blocked"`, `type="invalid_request_error"`, `code="400"`, 원문 미유출 확인.
 
-**라이브 프록시에서 최종 확인 필요** (이 환경은 compose 미가용 → 오프라인 훅 테스트로 대체):
-- [ ] config `guardrails` 스키마(guardrail_name / litellm_params.guardrail / mode / default_on / policy_path)가 1.93.0 에서 그대로 로드되는지.
-- [ ] `data["metadata"]["kpii_mapping"]` 가 pre_call → post/streaming 훅까지 유지되는지 (Phase 3). 안 되면 litellm_call_id 키 모듈-레벨 dict + TTL 폴백 (DESIGN §6.3).
-- [ ] ProxyException 이 §5.4 형태(`{"error": {..., "code": "pii_blocked"}}`)로 직렬화되는지.
-- [ ] `turn_off_message_logging` / `store_prompts_in_spend_logs` 무유출 (Phase 5 테스트로 강제).
+**라이브 E2E 검증 완료** — compose 없이 로컬 하니스로 실행(litellm[proxy] 프록시 + uvicorn fake upstream). 통합테스트 **8/8 통과**. 발견/해결:
+- [x] config `guardrails` 스키마 1.93.0 로드 OK. **단 mode 는 리스트여야 함**: `[pre_call, post_call]`. pre 만 주면 응답 복원(post) 훅이 `should_run_guardrail(post_call)` 게이팅으로 실행되지 않음 (custom_guardrail.py L618-619).
+- [x] `metadata.kpii_mapping` 가 pre_call → post 훅까지 유지됨(응답 복원이 E2E로 동작 = 확인).
+- [x] ProxyException 직렬화: `{"error": {message, type, param, code}}`. **openai_code 는 본문에 노출 안 됨**, `code` 엔 HTTP 상태("400"). → PII 차단 식별 마커 `[pii_blocked]` 를 message 에 포함.
+- [x] guardrail 모듈 로드: litellm `get_instance_fn` 은 **config 파일 디렉터리 기준**으로 `custom_guardrails/kpii_guardrail.py` 로드(PYTHONPATH 아님). config 와 custom_guardrails/ 를 같은 디렉터리에 둘 것(도커 /app, 로컬은 repo 루트 config).
+- [ ] `turn_off_message_logging` / `store_prompts_in_spend_logs` 무유출 — Phase 5 무유출 테스트로 강제(미검증).
+
+**무도커 로컬 E2E 방법**(compose 없이): `pip install -e ".[proxy]"` → fake upstream `uvicorn tests.fake_upstream.app:app --port 9000` → repo 루트에 config(mode:[pre_call,post_call], mock-model→127.0.0.1:9000, master_key) 두고 `litellm --config <repo>/config.yaml --port 4000` → `GATEWAY_URL=... FAKE_UPSTREAM_URL=... pytest -m integration`.
 
 ## 환경
 - 로컬 dev: Python 3.14 venv. 코어 단위테스트 오프라인 통과(63 passed). litellm/fastapi 설치 시 guardrail·fake_upstream 테스트도 실행되고, 미설치면 `importorskip` 로 skip.

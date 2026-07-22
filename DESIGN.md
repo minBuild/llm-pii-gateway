@@ -212,14 +212,16 @@ ner:
 
 OpenAI 호환 에러 형식을 유지해 클라이언트 SDK가 정상 파싱하게 한다. **에러 메시지에 원문 값 포함 금지** — 엔티티 타입명만.
 
+litellm `ProxyException` 을 raise 하면 아래처럼 직렬화된다(라이브 검증). 주의: litellm 은 `openai_code` 를 응답 본문에 노출하지 않고 `code` 에 HTTP 상태를 넣는다. 그래서 클라이언트가 PII 차단을 기계적으로 식별하도록 안정 마커 `[pii_blocked]` 를 메시지 앞에 넣는다.
+
 ```
 HTTP 400
 {
   "error": {
-    "message": "요청에 차단 대상 민감정보가 포함되어 있습니다: RRN(주민등록번호). 해당 값을 제거한 뒤 다시 시도하세요.",
+    "message": "[pii_blocked] 요청에 차단 대상 민감정보가 포함되어 있습니다: RRN(주민등록번호). 해당 값을 제거한 뒤 다시 시도하세요.",
     "type": "invalid_request_error",
     "param": null,
-    "code": "pii_blocked"
+    "code": "400"
   }
 }
 ```
