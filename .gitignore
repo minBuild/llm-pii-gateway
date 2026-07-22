@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# 환경/시크릿 — .env.example 만 커밋
+.env
+.env.*
+!.env.example
+
+# OMC / 에디터 / OS
+.omc/
+.idea/
+.vscode/
+.DS_Store
+
+# 로그
+*.log
