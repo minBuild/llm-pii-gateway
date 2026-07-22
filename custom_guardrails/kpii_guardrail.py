@@ -16,7 +16,7 @@ from litellm.integrations.custom_guardrail import CustomGuardrail
 from litellm.proxy._types import ProxyException
 
 from kpii.audit import event_from_result
-from kpii.masking import MaskingSession
+from kpii.masking import MaskingSession, StreamRestorer, restore
 from kpii.openai_gateway import process_request
 from kpii.policy import Policy
 
@@ -103,10 +103,47 @@ class KoreanPIIGuardrail(CustomGuardrail):
             return data
 
     async def async_post_call_success_hook(self, data, user_api_key_dict, response):
-        # Phase 3: data["metadata"][MAPPING_KEY] 로 response 텍스트 복원
+        # 비스트리밍 응답 복원: choices[].message.content 및 tool_calls arguments (§5).
+        mapping = self._mapping_from(data)
+        if not mapping:
+            return response
+        for choice in getattr(response, "choices", None) or []:
+            msg = getattr(choice, "message", None)
+            if msg is None:
+                continue
+            content = getattr(msg, "content", None)
+            if isinstance(content, str):
+                msg.content = restore(content, mapping)
+            for tc in getattr(msg, "tool_calls", None) or []:
+                fn = getattr(tc, "function", None)
+                args = getattr(fn, "arguments", None) if fn is not None else None
+                if isinstance(args, str):
+                    fn.arguments = restore(args, mapping)
         return response
 
     async def async_post_call_streaming_iterator_hook(self, user_api_key_dict, response, request_data):
-        # Phase 3: StreamRestorer 로 델타 복원
+        # 스트리밍 복원: 델타를 StreamRestorer 로 통과. 매핑 없으면 버퍼링 없이 통과(지연 0).
+        # 단일 choice(n=1) 가정 — 스트리밍 복원의 일반 케이스.
+        mapping = self._mapping_from(request_data)
+        if not mapping:
+            async for chunk in response:
+                yield chunk
+            return
+        restorer = StreamRestorer(mapping)
         async for chunk in response:
+            choices = getattr(chunk, "choices", None) or []
+            if choices:
+                delta = getattr(choices[0], "delta", None)
+                content = getattr(delta, "content", None) if delta is not None else None
+                if isinstance(content, str) and content:
+                    delta.content = restorer.push(content)
+                if delta is not None and getattr(choices[0], "finish_reason", None) is not None:
+                    leftover = restorer.flush()      # 종료 청크에 남은 버퍼 방출
+                    if leftover:
+                        delta.content = (getattr(delta, "content", None) or "") + leftover
             yield chunk
+
+    @staticmethod
+    def _mapping_from(container) -> dict:
+        meta = (container or {}).get("metadata") or {}
+        return meta.get(MAPPING_KEY) or {}

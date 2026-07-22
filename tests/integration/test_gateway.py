@@ -9,6 +9,7 @@
 compose 가능한 로컬에서 검증한다.
 """
 
+import json
 import os
 
 import pytest
@@ -99,3 +100,32 @@ def test_log_only_brn_passthrough():
     r = _chat(f"사업자등록번호 {brn} 조회 부탁")
     assert r.status_code == 200
     assert brn in _last_upstream()["messages"][0]["content"]    # LOG_ONLY → 원문 유지
+
+
+# ---------------- Phase 3: 응답 복원 ----------------
+
+
+def test_response_restored_nonstreaming():
+    phone = "010-1234-5678"
+    r = _chat(f"ECHO:내 번호 {phone} 입니다")     # 업스트림이 마스킹된 텍스트를 에코
+    assert r.status_code == 200
+    content = r.json()["choices"][0]["message"]["content"]
+    assert phone in content                        # 클라이언트는 원문을 본다(복원됨)
+    assert "[PHONE_" not in content
+    sent = _last_upstream()["messages"][-1]["content"]
+    assert phone not in sent and "[PHONE_1]" in sent   # 업스트림엔 마스킹된 채로 도달
+
+
+def test_response_restored_streaming():
+    phone = "010-9876-5432"
+    body = {"model": "mock-model", "stream": True,
+            "messages": [{"role": "user", "content": f"ECHO:연락처 {phone}"}]}
+    text = ""
+    with httpx.stream("POST", f"{GATEWAY}/v1/chat/completions",
+                      json=body, headers=HEADERS, timeout=30) as resp:
+        assert resp.status_code == 200
+        for line in resp.iter_lines():
+            if line.startswith("data: ") and "[DONE]" not in line:
+                delta = json.loads(line[len("data: ") :])["choices"][0].get("delta", {})
+                text += delta.get("content") or ""
+    assert phone in text and "[PHONE_" not in text    # 스트리밍 청크 재조립 후 원문 복원

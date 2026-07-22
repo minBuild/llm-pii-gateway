@@ -62,6 +62,13 @@ class MaskingSession:
         return StreamRestorer(self._ph_to_value)
 
 
+def restore(text: str, mapping: dict[str, str]) -> str:
+    """플레이스홀더를 매핑으로 복원(세션 불필요). 매핑에 없는 토큰은 그대로 둔다."""
+    if not mapping:
+        return text
+    return PLACEHOLDER_RE.sub(lambda m: mapping.get(m.group(0), m.group(0)), text)
+
+
 def _is_potential_prefix(s: str) -> bool:
     return bool(_POTENTIAL_PREFIX_RE.match(s))
 
