@@ -1,0 +1,16 @@
+# Presidio NLP 엔진 설정 — 한국어 spaCy (DESIGN §6.6).
+# VERIFY(로컬): ko_core_news_lg 의 실제 NER 라벨을 확인하고 매핑을 맞출 것.
+#   python -c "import spacy; print(spacy.load('ko_core_news_lg').pipe_labels['ner'])"
+# 아래 PS/LC/OG 매핑은 한국어 NER 관례(개체명: PS=인물, LC=지명, OG=기관) 기준 초안이다.
+nlp_engine_name: spacy
+models:
+  - lang_code: ko
+    model_name: ko_core_news_lg
+ner_model_configuration:
+  model_to_presidio_entity_mapping:
+    PS: PERSON        # 인물 → PERSON
+    LC: LOCATION      # 지명/주소 → LOCATION
+    OG: ORGANIZATION  # 기관(마스킹 대상 아님, 참고용)
+  labels_to_ignore:
+    - O
+  low_confidence_score_multiplier: 1.0

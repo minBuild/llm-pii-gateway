@@ -18,3 +18,19 @@ services:
         condition: service_healthy
       fake-upstream:
         condition: service_healthy
+
+  # NER(L2) 사이드카 — opt-in 프로파일. NER E2E 때만 기동:
+  #   docker compose -f docker-compose.yml -f docker-compose.test.yml --profile ner up -d --build
+  # 그리고 guardrail 정책을 with-ner.yaml 로 바꿔야 함(policy_path 또는 KPII_POLICY_PATH).
+  presidio-analyzer:
+    profiles: ["ner"]
+    build: ./presidio
+    ports:
+      - "3000:3000"          # VERIFY: 이미지의 실제 analyzer 포트
+    mem_limit: 2g            # 한국어 lg 모델은 메모리 사용량이 큼
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s      # 모델 로딩이 오래 걸림

@@ -17,8 +17,9 @@ from litellm.proxy._types import ProxyException
 
 from kpii.audit import event_from_result
 from kpii.masking import MaskingSession, StreamRestorer, restore
-from kpii.openai_gateway import process_request
+from kpii.openai_gateway import process_request, process_request_async
 from kpii.policy import Policy
+from kpii.types import NerUnavailable
 
 _ENTITY_LABELS = {
     "RRN": "주민등록번호",
@@ -40,12 +41,20 @@ _DEFAULT_POLICY = "/app/policies/default.yaml"
 class KoreanPIIGuardrail(CustomGuardrail):
     """요청 본문의 한국어 PII를 탐지해 마스킹/차단하는 LiteLLM guardrail."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, *, ner_client=None, **kwargs: Any) -> None:
         # policy_path 는 litellm_params(config) 또는 환경변수로 주입. 나머지는 super 로 전달.
         policy_path = kwargs.pop("policy_path", None) or os.environ.get(
             "KPII_POLICY_PATH", _DEFAULT_POLICY
         )
         self.policy = Policy.load(policy_path)
+        # NER 활성 시 Presidio 클라이언트 구성(테스트는 ner_client 주입 가능, 키워드 전용)
+        self._ner_client = ner_client
+        if self._ner_client is None and self.policy.ner.enabled:
+            from kpii.detectors.presidio_client import PresidioClient
+
+            self._ner_client = PresidioClient(
+                self.policy.ner.api_base, self.policy.ner.timeout_ms
+            )
         super().__init__(**kwargs)
 
     def _emit_audit(self, event) -> None:
@@ -55,7 +64,10 @@ class KoreanPIIGuardrail(CustomGuardrail):
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         try:
             session = MaskingSession()
-            result = process_request(data, self.policy, session)
+            if self.policy.ner.enabled and self._ner_client is not None:
+                result = await process_request_async(data, self.policy, session, self._ner_client)
+            else:
+                result = process_request(data, self.policy, session)
 
             # 감사 이벤트 생성 지점 (로거 연결은 Phase 5 — no-op sink)
             self._emit_audit(
@@ -93,6 +105,15 @@ class KoreanPIIGuardrail(CustomGuardrail):
 
         except ProxyException:
             raise
+        except NerUnavailable:
+            # NER 사이드카 불가 + 정책 ner.on_failure=block → 요청 차단(503)
+            raise ProxyException(
+                message="[ner_unavailable] PII 탐지(NER) 서비스에 연결할 수 없어 정책상 요청을 차단합니다.",
+                type="api_error",
+                param=None,
+                code=503,
+                openai_code="ner_unavailable",
+            )
         except Exception:
             # 필터 자체 오류: 정책에 따라 fail-closed(block) 또는 degrade(allow) — §D5
             if self.policy.on_internal_error == "block":

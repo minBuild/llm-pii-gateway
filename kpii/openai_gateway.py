@@ -14,11 +14,12 @@ LiteLLM 무의존(순수 파이썬). LiteLLM guardrail 어댑터
 
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from .engine import scan
+from .engine import scan, scan_async
 from .masking import MaskingSession
 from .policy import Policy
 from .types import Action
@@ -89,22 +90,44 @@ def _iter_scan_fields(body: dict) -> tuple[list[_Field], bool]:
 
 
 def process_request(body: dict, policy: Policy, session: MaskingSession) -> ProcessResult:
-    """요청 본문을 in-place 로 마스킹하고 결과를 반환.
+    """L1 전용(동기). NER 비활성 경로. 본문을 in-place 로 마스킹/차단."""
+    fields, image_passthrough = _iter_scan_fields(body)
+    scanned = [(text, setter, scan(text, policy)) for text, setter in fields]
+    return _finalize(scanned, policy, session, image_passthrough)
 
-    BLOCK 엔티티가 하나라도 있으면 본문을 **변형하지 않고** blocked 결과를 돌려준다
-    (업스트림 호출 없이 어댑터가 400 반환, §5.4). 그 외에는 MASK 엔티티만 치환하고
-    LOG_ONLY 는 원문 그대로 둔다.
+
+async def process_request_async(
+    body: dict, policy: Policy, session: MaskingSession, ner_client=None
+) -> ProcessResult:
+    """L1+L2(비동기). NER 활성 경로. 필드별 NER 호출을 동시에 실행해 지연을 최소화한다.
+
+    NER 실패 시 scan_async 가 정책(ner.on_failure)에 따라 degrade 하거나 NerUnavailable 를
+    전파한다(어댑터가 503 차단).
     """
     fields, image_passthrough = _iter_scan_fields(body)
+    dets_per_field = await asyncio.gather(
+        *(scan_async(text, policy, ner_client) for text, _ in fields)
+    )
+    scanned = [
+        (text, setter, dets) for (text, setter), dets in zip(fields, dets_per_field)
+    ]
+    return _finalize(scanned, policy, session, image_passthrough)
 
-    scanned: list[tuple[str, Callable[[str], None], list]] = []
+
+def _finalize(
+    scanned: list[tuple[str, Callable[[str], None], list]],
+    policy: Policy,
+    session: MaskingSession,
+    image_passthrough: bool,
+) -> ProcessResult:
+    """스캔 결과(필드별)로 BLOCK 검사 → MASK 적용 → 결과 반환 (§5.4).
+
+    BLOCK 엔티티가 하나라도 있으면 본문을 **변형하지 않고** blocked 결과를 돌려준다.
+    """
     detections: Counter[str] = Counter()
-    for text, setter in fields:
-        dets = scan(text, policy)
-        scanned.append((text, setter, dets))
+    for _, _, dets in scanned:
         detections.update(d.entity for d in dets)
 
-    # BLOCK 검사(전체 필드) — 하나라도 있으면 변형 없이 차단
     block_entities = sorted(
         {
             d.entity
@@ -122,7 +145,6 @@ def process_request(body: dict, policy: Policy, session: MaskingSession) -> Proc
             image_passthrough=image_passthrough,
         )
 
-    # MASK 적용 (LOG_ONLY 는 그대로)
     actions: Counter[str] = Counter()
     for text, setter, dets in scanned:
         masks = [d for d in dets if policy.action_for(d.entity) is Action.MASK]

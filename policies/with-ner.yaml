@@ -1,0 +1,21 @@
+# NER(L2, Presidio) 활성 정책 (Phase 4). 통합 스택에서 사용.
+version: 1
+default_action: mask
+entities:
+  RRN:            { action: block }
+  CARD:           { action: mask }
+  PHONE:          { action: mask }
+  EMAIL:          { action: mask }
+  DRIVER_LICENSE: { action: mask }
+  PASSPORT:       { action: mask }
+  BANK_ACCOUNT:   { action: mask }
+  BRN:            { action: log_only }
+  CREDENTIAL:     { action: block }
+  PERSON:         { action: mask }      # NER 탐지 (이름)
+  LOCATION:       { action: mask }      # NER 탐지 (주소/지명)
+on_internal_error: block
+ner:
+  enabled: true
+  api_base: http://presidio-analyzer:3000
+  timeout_ms: 300
+  on_failure: degrade         # NER 죽어도 L1만으로 진행(가용성 우선). block 으로 바꾸면 503 차단

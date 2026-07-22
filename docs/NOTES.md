@@ -34,3 +34,11 @@
 - 2026-07-22 Phase 2: 탐지/마스킹 로직은 `kpii/openai_gateway.py`(litellm 무의존), `custom_guardrails/kpii_guardrail.py` 는 얇은 어댑터. 차단은 ProxyException.
 - 2026-07-22 Phase 2: litellm 은 proxy extra(`pip install -e ".[proxy]"`)로 분리 — 코어 단위테스트는 litellm 없이 통과.
 - 2026-07-22 Phase 3: 응답 복원 — `async_post_call_success_hook`(비스트리밍) + `async_post_call_streaming_iterator_hook`(스트리밍, StreamRestorer). 매핑 없으면 버퍼링 없이 통과. `metadata.kpii_mapping` 이 pre_call→post 훅까지 유지되는지는 라이브 프록시 확인 항목(상단 체크리스트). 스트리밍은 단일 choice(n=1) 가정.
+- 2026-07-22 Phase 4: L2(NER) — 비동기 `PresidioClient`(HTTP `/analyze`) + `engine.scan_async` + `openai_gateway.process_request_async`(필드별 NER 동시 호출). guardrail 은 `policy.ner.enabled` 시 async 경로. NER 실패는 `NerUnavailable` → `on_failure=block`이면 ProxyException 503, `degrade`면 경고 후 L1만. 오프라인 12건(모킹) 통과. **실제 Presidio E2E는 이 환경 미실행**(모델이 무거움) — Phase 2/3와 달리 라이브 NER 미검증.
+
+## Presidio 사이드카 — 로컬 확인 필요 (Phase 4)
+- [ ] presidio-analyzer 이미지 태그 고정 + NLP 설정 파일 로드 경로/환경변수/포트(3000?) — 이미지 버전마다 다름.
+- [ ] `ko_core_news_lg` 실제 NER 라벨셋(`python -c "import spacy; print(spacy.load('ko_core_news_lg').pipe_labels['ner'])"`) → `presidio/nlp_conf.yaml` PS/LC/OG 매핑 조정.
+- [ ] `/analyze` 요청·응답 포맷이 `PresidioClient` 파싱과 일치하는지(문서 기준으로 구현함).
+- [ ] NER on/off p95 지연 측정(각 20회) 기록(DESIGN Phase 4 item 6).
+- 로컬 NER E2E: `docker compose -f docker-compose.yml -f docker-compose.test.yml --profile ner up -d --build` + guardrail 정책을 `with-ner.yaml` 로 + `KPII_NER_E2E=1 pytest -m integration`. (또는 무도커 하니스 + presidio 로컬 실행 + with-ner config.)

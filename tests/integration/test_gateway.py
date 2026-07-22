@@ -129,3 +129,20 @@ def test_response_restored_streaming():
                 delta = json.loads(line[len("data: ") :])["choices"][0].get("delta", {})
                 text += delta.get("content") or ""
     assert phone in text and "[PHONE_" not in text    # 스트리밍 청크 재조립 후 원문 복원
+
+
+# ---------------- Phase 4: NER(L2) 이름/주소 ----------------
+# NER 스택(presidio + with-ner 정책)이 떠 있을 때만. 기본 스택에선 skip:
+#   docker compose ... --profile ner up -d --build   (+ guardrail 정책 with-ner.yaml)
+#   KPII_NER_E2E=1 pytest -m integration
+
+_NER_E2E = os.environ.get("KPII_NER_E2E") == "1"
+
+
+@pytest.mark.skipif(not _NER_E2E, reason="NER E2E 아님 (KPII_NER_E2E=1 + presidio/with-ner 스택 필요)")
+def test_ner_masks_person_and_location():
+    r = _chat("김민수 고객이 서울시 강남구로 이사했습니다")
+    assert r.status_code == 200
+    sent = _last_upstream()["messages"][0]["content"]
+    assert "김민수" not in sent and "[PERSON_1]" in sent
+    assert "서울시" not in sent and "[LOCATION_1]" in sent

@@ -30,6 +30,10 @@ class Action(str, Enum):
     OFF = "off"
 
 
+class NerUnavailable(Exception):
+    """L2(NER) 사이드카 호출 실패(타임아웃/연결/HTTP 오류). 정책의 ner.on_failure 로 처리."""
+
+
 @dataclass(frozen=True, repr=False)
 class Detection:
     """탐지된 PII 스팬 하나.
