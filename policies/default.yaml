@@ -1,0 +1,20 @@
+version: 1
+default_action: mask          # 카탈로그에 없는/새 엔티티의 기본값
+entities:
+  RRN:            { action: block }
+  CARD:           { action: mask }
+  PHONE:          { action: mask }
+  EMAIL:          { action: mask }
+  DRIVER_LICENSE: { action: mask }
+  PASSPORT:       { action: mask }
+  BANK_ACCOUNT:   { action: mask }
+  BRN:            { action: log_only }
+  CREDENTIAL:     { action: block }
+  PERSON:         { action: mask }      # ner.enabled=true일 때만 유효
+  LOCATION:       { action: mask }
+on_internal_error: block      # guardrail 내부 예외 시: block(기본) | allow
+ner:
+  enabled: false              # Phase 4에서 true로
+  api_base: http://presidio-analyzer:3000
+  timeout_ms: 300
+  on_failure: degrade         # degrade(L1만으로 진행+경고) | block

@@ -1,0 +1,29 @@
+{"kind": "positive", "text": "제 주민등록번호는 880315-1123459 입니다.", "expect": ["RRN"]}
+{"kind": "positive", "text": "주민번호 8803151123459 확인 바랍니다.", "expect": ["RRN"]}
+{"kind": "positive", "text": "임의번호 880315-1123450 케이스", "expect": ["RRN"]}
+{"kind": "positive", "text": "연락처 010-1234-5678 로 연락 주세요.", "expect": ["PHONE"]}
+{"kind": "positive", "text": "전화 01098765432 입니다.", "expect": ["PHONE"]}
+{"kind": "positive", "text": "사무실 02-123-4567 로 전화 주세요.", "expect": ["PHONE"]}
+{"kind": "positive", "text": "이메일 hong@example.com 으로 보내주세요.", "expect": ["EMAIL"]}
+{"kind": "positive", "text": "카드번호 4532-1234-5678-9014 로 결제했습니다.", "expect": ["CARD"]}
+{"kind": "positive", "text": "카드 4532123456789014 승인", "expect": ["CARD"]}
+{"kind": "positive", "text": "운전면허 11-23-123456-78 소지 중.", "expect": ["DRIVER_LICENSE"]}
+{"kind": "positive", "text": "여권번호 M12345678 입니다.", "expect": ["PASSPORT"]}
+{"kind": "positive", "text": "여권 M123A4567 발급 완료.", "expect": ["PASSPORT"]}
+{"kind": "positive", "text": "입금 계좌 123-456-789012 로 보내주세요.", "expect": ["BANK_ACCOUNT"]}
+{"kind": "positive", "text": "사업자등록번호 123-45-67891 입니다.", "expect": ["BRN"]}
+{"kind": "positive", "text": "api key: sk-abcdefghijklmnopqrstuvwxyz012345 노출됨", "expect": ["CREDENTIAL"]}
+{"kind": "positive", "text": "AWS AKIAIOSFODNN7EXAMPLE 유출 주의", "expect": ["CREDENTIAL"]}
+{"kind": "positive", "text": "토큰 ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 확인", "expect": ["CREDENTIAL"]}
+{"kind": "multi", "text": "홍길동 010-1234-5678, hong@example.com 참고", "expect": ["EMAIL", "PHONE"]}
+{"kind": "multi", "text": "주민 880315-1123459 / 카드 4532-1234-5678-9014", "expect": ["CARD", "RRN"]}
+{"kind": "negative", "text": "주문번호 2013132512345 확인", "expect": []}
+{"kind": "negative", "text": "행사일 20260722 진행 예정", "expect": []}
+{"kind": "negative", "text": "송장번호 123456789012 배송중", "expect": []}
+{"kind": "negative", "text": "결제금액 1,234,567원 청구되었습니다", "expect": []}
+{"kind": "negative", "text": "버전 1.2.3-rc.4 릴리스 노트", "expect": []}
+{"kind": "negative", "text": "결제 실패 카드 4532-1234-5678-9015 재시도", "expect": []}
+{"kind": "negative", "text": "번호 123-456-789012 참고하세요", "expect": []}
+{"kind": "negative", "text": "등록 123-45-67892 은 무효", "expect": []}
+{"kind": "negative", "text": "코드 M12345678 참조", "expect": []}
+{"kind": "negative", "text": "식별자 11-23-123456-78 기록됨", "expect": []}
