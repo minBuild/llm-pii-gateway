@@ -1,0 +1,20 @@
+# 통합테스트용 오버레이 (Phase 2). base 와 함께 사용:
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build
+# litellm 은 config.yaml 의 mock-model 을 http://fake-upstream:9000/v1 로 라우팅한다.
+services:
+  fake-upstream:
+    build: ./tests/fake_upstream
+    ports:
+      - "9000:9000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  litellm:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      fake-upstream:
+        condition: service_healthy

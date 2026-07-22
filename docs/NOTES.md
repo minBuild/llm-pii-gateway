@@ -1,29 +1,32 @@
 # 구현 노트 — LiteLLM 검증·결정 기록 (DESIGN §9)
 
 ## LiteLLM 버전
-- 현재 `Dockerfile`: `ghcr.io/berriai/litellm:main-stable` (rolling 태그).
-- **잔여 작업(Phase 0)**: 재현성을 위해 특정 `vX.Y.Z-stable` 로 고정할 것. 이 세션에서는
-  최신 stable 버전 번호를 네트워크로 확정하지 못해 임시로 rolling 태그를 사용 중이다.
-  `ghcr.io/berriai/litellm` 패키지 또는 GitHub releases 에서 확인 후 고정한다.
+- Dockerfile: `ghcr.io/berriai/litellm:v1.93.0-stable`.
+- 로컬 dev venv 에 `pip install litellm` → **1.93.0** 설치·검증(가드레일 훅 API 확인용).
+- 빌드 시 ghcr 에 `v1.93.0-stable` 태그 존재 확인. 없으면 `v1.93.0` 또는 최근 `-stable`.
 
-## 구현 전 실제 버전 소스에서 확인할 것 (§9-1, 추측 금지)
-- [ ] 이미지 ENTRYPOINT/CMD — compose `command: --config /app/config.yaml --port 4000` 가 맞는지.
-- [ ] guardrail 훅 시그니처: `async_pre_call_hook` / `async_post_call_success_hook` /
-      `async_post_call_streaming_iterator_hook` (`litellm/integrations/custom_guardrail.py`).
-- [ ] `data["metadata"]` 가 pre_call → post/streaming 훅까지 유지되는지(매핑 전달 경로).
-      안 되면 `litellm_call_id` 키 모듈-레벨 dict + TTL 폴백 (DESIGN §6.3).
-- [ ] guardrail `mode` 표기와 post 훅 활성화 방식, 요청별 guardrail 해제 가능 여부
-      (가능하면 반드시 비활성화 — 사용자가 필터를 못 끄게).
-- [ ] `turn_off_message_logging` / `store_prompts_in_spend_logs` 가 실제로 콜백·spend 로그에
-      원문을 남기지 않는지 → Phase 5 무유출 테스트로 강제.
+## LiteLLM API 검증 (§9-1)
+**검증 완료** — litellm 1.93.0 실제 소스 introspection:
+- `CustomGuardrail` 훅:
+  - `async_pre_call_hook(self, user_api_key_dict, cache, data, call_type) -> Exception|str|dict|None`
+  - `async_post_call_success_hook(self, data, user_api_key_dict, response)`
+  - `async_post_call_streaming_iterator_hook(self, user_api_key_dict, response, request_data) -> AsyncGenerator`
+  - `__init__(self, guardrail_name=None, ..., default_on=False, **kwargs)` — 커스텀 kwargs 허용.
+- 차단: `litellm.proxy._types.ProxyException(message, type, param, code, openai_code=...)`.
+  오프라인 훅 호출에서 `openai_code="pii_blocked"`, `type="invalid_request_error"`, `code="400"`, 원문 미유출 확인.
 
-## 환경 (이 저장소 기준)
-- 로컬 개발: Python 3.14 venv(`.venv`), pytest 9.x. 코어 타깃은 3.11+.
-- Docker 29.x. Phase 1 단위테스트는 `make test-unit` 로 오프라인 통과 확인됨(51 passed).
-- `make up` 헬스체크는 업스트림 키 + 이미지 pull 이 필요해 로컬에서 실행한다(이 세션 미실행).
+**라이브 프록시에서 최종 확인 필요** (이 환경은 compose 미가용 → 오프라인 훅 테스트로 대체):
+- [ ] config `guardrails` 스키마(guardrail_name / litellm_params.guardrail / mode / default_on / policy_path)가 1.93.0 에서 그대로 로드되는지.
+- [ ] `data["metadata"]["kpii_mapping"]` 가 pre_call → post/streaming 훅까지 유지되는지 (Phase 3). 안 되면 litellm_call_id 키 모듈-레벨 dict + TTL 폴백 (DESIGN §6.3).
+- [ ] ProxyException 이 §5.4 형태(`{"error": {..., "code": "pii_blocked"}}`)로 직렬화되는지.
+- [ ] `turn_off_message_logging` / `store_prompts_in_spend_logs` 무유출 (Phase 5 테스트로 강제).
+
+## 환경
+- 로컬 dev: Python 3.14 venv. 코어 단위테스트 오프라인 통과(63 passed). litellm/fastapi 설치 시 guardrail·fake_upstream 테스트도 실행되고, 미설치면 `importorskip` 로 skip.
+- Docker 29.x 이나 **compose 플러그인/v1 미설치** → `make test-integration`(프록시 E2E)은 compose 가능한 로컬에서 실행. 통합테스트는 `@pytest.mark.integration`.
 
 ## 결정 로그
-- 2026-07-22 Phase 1: 부록 B 정규식을 오탐 감소 방향으로 조정 — DRIVER_LICENSE 는 체크섬이
-  없어 12자리 숫자열과 충돌하므로 문맥 키워드(면허/운전) 필수로 변경. BANK_ACCOUNT 문맥
-  키워드에서 흔한 일반어와 겹치는 은행명(우리/하나/기업 등)은 제외.
-- (양식) LiteLLM 동작이 문서와 다르면 여기에 "무엇을 시도했고 왜 우회했는지" 기록.
+- 2026-07-22 Phase 1: 부록 B 정규식 오탐 감소 조정 — DRIVER_LICENSE 문맥(면허/운전) 필수, BANK_ACCOUNT 키워드에서 흔한 일반어 은행명(우리/하나/기업 등) 제외.
+- 2026-07-22 Phase 2: `custom_guardrails/` 를 레포 루트로 이동(원래 `litellm/custom_guardrails/`). 이유: 로컬에서 `custom_guardrails.kpii_guardrail` import 가 도커(/app 기준)와 동일하게 되도록. `litellm/` 엔 config.yaml 만 남김(pip `litellm` 패키지를 shadow 하지 않음 — 검증함).
+- 2026-07-22 Phase 2: 탐지/마스킹 로직은 `kpii/openai_gateway.py`(litellm 무의존), `custom_guardrails/kpii_guardrail.py` 는 얇은 어댑터. 차단은 ProxyException.
+- 2026-07-22 Phase 2: litellm 은 proxy extra(`pip install -e ".[proxy]"`)로 분리 — 코어 단위테스트는 litellm 없이 통과.

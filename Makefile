@@ -1,6 +1,6 @@
 VENV := .venv/bin
 
-.PHONY: help venv build up down logs smoke test-unit test-integration fixtures lint
+.PHONY: help venv build up down up-test down-test logs smoke test-unit test-integration fixtures lint
 
 help: ## 사용 가능한 타깃 목록
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -16,6 +16,12 @@ up: ## 게이트웨이 + postgres 기동
 
 down: ## 중지 및 볼륨 정리
 	docker compose down
+
+up-test: ## 통합테스트 스택 기동 (litellm + postgres + fake-upstream)
+	docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build
+
+down-test: ## 통합테스트 스택 정리
+	docker compose -f docker-compose.yml -f docker-compose.test.yml down -v
 
 logs: ## litellm 로그 팔로우
 	docker compose logs -f litellm

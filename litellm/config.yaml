@@ -26,5 +26,12 @@ general_settings:
   database_url: os.environ/DATABASE_URL
   store_prompts_in_spend_logs: false        # spend 로그에 프롬프트 저장 금지
 
-# guardrails 섹션은 Phase 2에서 활성화한다 (DESIGN §6.4):
-#   custom_guardrails.kpii_guardrail.KoreanPIIGuardrail, mode: pre_call, default_on: true
+guardrails:
+  - guardrail_name: kpii
+    litellm_params:
+      guardrail: custom_guardrails.kpii_guardrail.KoreanPIIGuardrail
+      mode: pre_call            # 요청 전 훅. 응답/스트리밍 복원은 Phase 3
+      default_on: true          # 모든 요청에 강제 (요청별 해제 불가)
+      policy_path: /app/policies/default.yaml
+# NOTE(§9-1): guardrails 스키마(mode/default_on/guardrail 경로)는 라이브 프록시 1.93.0 에서
+# 최종 확인 필요. 클래스/훅 시그니처는 실제 소스로 검증 완료(docs/NOTES.md).

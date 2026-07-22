@@ -2,6 +2,8 @@
 services:
   litellm:
     build: .
+    environment:
+      KPII_POLICY_PATH: /app/policies/default.yaml   # guardrail 정책 경로(config policy_path 폴백)
     env_file:
       - path: .env
         required: false     # 없어도 파싱은 통과. 실제 up 시엔 .env 필요(키 주입)

@@ -249,10 +249,10 @@ llm-pii-gateway/
 ├── .env.example
 ├── Makefile
 ├── litellm/
-│   ├── config.yaml
-│   └── custom_guardrails/
-│       ├── __init__.py
-│       └── kpii_guardrail.py        # LiteLLM 어댑터 (Phase 2~3)
+│   └── config.yaml                  # LiteLLM 프록시 설정 (guardrails 포함)
+├── custom_guardrails/               # LiteLLM 어댑터 (레포 루트 — 도커 /app 와 동일 import 경로)
+│   ├── __init__.py
+│   └── kpii_guardrail.py            # KoreanPIIGuardrail (Phase 2~3)
 ├── kpii/                            # 코어 라이브러리 — LiteLLM 무의존
 │   ├── __init__.py
 │   ├── types.py                     # Span, Detection, Action 등 dataclass
@@ -264,6 +264,7 @@ llm-pii-gateway/
 │   ├── engine.py                    # scan() / mask() / restore() 통합 진입점
 │   ├── masking.py                   # 플레이스홀더 발급·치환·복원, 스트림 버퍼
 │   ├── policy.py                    # 정책 yaml 로더/검증
+│   ├── openai_gateway.py            # OpenAI 요청 본문 스캔/마스킹/차단 (Phase 2, §5.5)
 │   └── audit.py                     # 감사 이벤트 dataclass + 로거 (Phase 5)
 ├── policies/
 │   └── default.yaml
