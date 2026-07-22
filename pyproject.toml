@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kpii"
+version = "0.1.0"
+description = "Korean PII detection & reversible masking core for an LLM PII gateway"
+requires-python = ">=3.11"
+dependencies = ["pyyaml>=6"]
+
+[project.optional-dependencies]
+ner = ["httpx>=0.27"]        # Phase 4: Presidio 사이드카 클라이언트
+dev = ["pytest>=8", "ruff"]
+
+[tool.setuptools]
+packages = ["kpii", "kpii.detectors"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "integration: docker compose·네트워크가 필요한 통합 테스트 (Phase 2+, 기본 제외)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

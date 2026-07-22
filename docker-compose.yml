@@ -1,0 +1,39 @@
+# Phase 0: LiteLLM 프록시 + postgres. guardrail 은 Phase 2에서 config 로 활성화.
+services:
+  litellm:
+    build: .
+    env_file:
+      - path: .env
+        required: false     # 없어도 파싱은 통과. 실제 up 시엔 .env 필요(키 주입)
+    ports:
+      - "4000:4000"
+    # NOTE: 이미지 ENTRYPOINT/CMD 형태는 고정 버전에서 확인 필요 (docs/NOTES.md).
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+      - ./policies:/app/policies:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:4000/health/liveliness"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm
+      POSTGRES_DB: litellm
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:
