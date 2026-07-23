@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 
 from .engine import scan, scan_async
 from .masking import MaskingSession
+from .normalize import normalize_for_detection
 from .policy import Policy
 from .types import Action
 
@@ -86,6 +87,8 @@ def _iter_scan_fields(body: dict) -> tuple[list[_Field], bool]:
             if isinstance(item, str):
                 fields.append((item, _setter(inp, i)))
 
+    # 탐지 회피 방지: 정규화한 텍스트로 탐지·마스킹·전달을 일관되게(스팬 정합성). THREAT_MODEL R1.
+    fields = [(normalize_for_detection(text), setter) for text, setter in fields]
     return fields, image_seen
 
 

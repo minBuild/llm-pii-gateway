@@ -105,7 +105,7 @@ flowchart LR
 
 | ID | 위협 | 자산 | OWASP | 가능·영향 | 완화 (코드) | 잔여 |
 |---|---|---|---|---|---|---|
-| **I1** | **탐지 우회로 원문 PII가 TB4로 유출** — 난독화·인코딩·신형식·언어혼용·턴 분할 | A1 | LLM02 | 높음·높음 | L1 정규식+체크섬(`detectors/regex_detectors.py`, `validators.py`) + L2 NER(`engine.scan_async`); 측정 하니스로 재현율 관리(`tests/util/eval.py`) | **R1** |
+| **I1** | **탐지 우회로 원문 PII가 TB4로 유출** — 난독화·인코딩·신형식·언어혼용·턴 분할 | A1 | LLM02 | 중간·높음 | L1 정규식+체크섬(`detectors/regex_detectors.py`, `validators.py`) + L2 NER(`engine.scan_async`); **입력 정규화**로 전각·원형숫자·제로폭·소프트하이픈 회피 방어(`normalize.py`); 측정 하니스(`tests/util/eval.py`)·적대적 측정(`tests/util/adversarial.py`) | **R1** |
 | **I2** | 원문 PII가 로그/메트릭/예외로 유출 | A1 | LLM02 | 중간·높음 | 감사·메트릭은 카운트/타입/지연만(`audit.py:event_from_result`, `metrics.py:record_scan`); `ProcessResult` 주석 D4; 예외 메시지에 원문 미포함(`kpii_guardrail.py`); 검증 `tests/unit/test_no_leak.py` + 라이브 로그 grep(NOTES) | R7 |
 | **I3** | 역매핑(A2) 탈취로 마스킹 역산 | A2 | LLM02 | 낮음·높음 | 매핑은 **요청 스코프**(`MaskingSession.mapping`), `data["metadata"]`에만 저장하고 **싱글턴 guardrail `self`엔 절대 안 올림**(`kpii_guardrail.py:async_pre_call_hook`) — 영속화(DB/Redis/파일/로그) 금지 | R8 |
 | **I4** | 교차 요청 매핑 오적용(다른 요청의 PII가 응답에 노출) | A1 | LLM02 | 낮음·높음 | 매핑을 요청별 `metadata`에서만 조회(`_mapping_from`) — 인스턴스 공유 상태 없음(불변식 §6) | — |
@@ -151,7 +151,7 @@ flowchart LR
 
 | ID | 잔여 리스크 | 심각도 | 현재 상태 | 대응 로드맵 |
 |---|---|---|---|---|
-| **R1** | 적대적 회피(난독화·유니코드 호모글리프·"공일공…"·base64·턴 분할) | **높음** | 자연 입력 기준 탐지만 | ① 입력 정규화(NFKC·공백/제로폭 제거) 전처리 ② **적대적 회피 테스트 스위트**(eval 확장) ③ 신뢰도 임계 튜닝 |
+| **R1** | 적대적 회피(난독화·인코딩·스크립트 혼용·턴 분할) | 중간 (↓높음) | **부분완화 완료** — 입력 정규화(`normalize.py`: NFKC+보이지않는문자 제거)로 전각·원형숫자·제로폭·소프트하이픈 방어(적대적 하니스 `tests/util/adversarial.py`로 4벡터 12/12 복구 측정). **잔여**: 낱자 공백분리·한글표기("공일공")·base64·스크립트혼용 호모글리프(키릴) | 잔여는 정밀도 리스크가 커 별도 대응 — 신뢰도 임계·L2 NER 강화·(인코딩)디코드 휴리스틱 |
 | **R2** | 프롬프트 인젝션/탈옥 미대응 | **높음** | 범위 밖 | 미니멀 인젝션 탐지 레이어(휴리스틱+패턴) 추가 → "DLP" → "LLM 보안 게이트웨이" 승격 |
 | **R3** | degrade/on_internal_error = fail-open | 중간 | 정책으로 선택 가능 | 민감 엔티티(RRN/크리덴셜)는 degrade에서도 **L1 차단 유지**(부분 fail-closed) |
 | **R4** | ReDoS·초대형 입력 자원 고갈 | 중간 | 경계 정규식만 | 입력 길이 상한 + 정규식 실행 타임아웃(defense-in-depth) |
