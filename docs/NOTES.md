@@ -37,9 +37,13 @@
 - 2026-07-22 Phase 4: L2(NER) — 비동기 `PresidioClient`(HTTP `/analyze`) + `engine.scan_async` + `openai_gateway.process_request_async`(필드별 NER 동시 호출). guardrail 은 `policy.ner.enabled` 시 async 경로. NER 실패는 `NerUnavailable` → `on_failure=block`이면 ProxyException 503, `degrade`면 경고 후 L1만. 오프라인 12건(모킹) 통과. **실제 Presidio E2E는 이 환경 미실행**(모델이 무거움) — Phase 2/3와 달리 라이브 NER 미검증.
 - 2026-07-23 Phase 5: 감사 로거(`kpii.audit` JSONL, 원문/위치 없음) + Prometheus 메트릭(`kpii_*`, prometheus_client 옵션, `KPII_METRICS_PORT` 로 노출). 무유출: 컴포넌트 테스트(test_no_leak) + 무도커 하니스로 **라이브 litellm 로그 grep(원문 없음 확인)**. guardrail 에서 지연 측정(scan_latency_ms). audit `ner_degraded` 플래그는 아직 미스레드(근사값) — 백로그. operations/onboarding 문서 작성.
 
-## Presidio 사이드카 — 로컬 확인 필요 (Phase 4)
-- [ ] presidio-analyzer 이미지 태그 고정 + NLP 설정 파일 로드 경로/환경변수/포트(3000?) — 이미지 버전마다 다름.
-- [ ] `ko_core_news_lg` 실제 NER 라벨셋(`python -c "import spacy; print(spacy.load('ko_core_news_lg').pipe_labels['ner'])"`) → `presidio/nlp_conf.yaml` PS/LC/OG 매핑 조정.
-- [ ] `/analyze` 요청·응답 포맷이 `PresidioClient` 파싱과 일치하는지(문서 기준으로 구현함).
-- [ ] NER on/off p95 지연 측정(각 20회) 기록(DESIGN Phase 4 item 6).
-- 로컬 NER E2E: `docker compose -f docker-compose.yml -f docker-compose.test.yml --profile ner up -d --build` + guardrail 정책을 `with-ner.yaml` 로 + `KPII_NER_E2E=1 pytest -m integration`. (또는 무도커 하니스 + presidio 로컬 실행 + with-ner config.)
+## Presidio(NER) 검증 현황 (Phase 4 / A)
+검증 완료(spaCy 3.8.13 + ko_core_news_sm 3.8.0 + presidio-analyzer, in-process):
+- [x] NER 라벨셋: **DT/LC/OG/PS/QT/TI** (sm/md/lg 동일). `presidio/nlp_conf.yaml` 주석에 기록.
+- [x] `nlp_conf` 매핑 실제 적용: AnalyzerEngine 로 김민수→PERSON(0.85), 서울시→LOCATION(0.85) 확인 → `tests/unit/test_presidio_live.py`(모델 있으면 실행, 없으면 skip).
+- [x] 결과 필드(entity_type/start/end/score)가 `PresidioClient` 파싱과 일치.
+
+남은 확인(도커 사이드카 실행 시):
+- [ ] REST `/analyze` HTTP 래퍼 포맷·포트(3000?)·이미지 NLP 설정 로드 방식(이미지 버전별).
+- [ ] 운영 정확도(lg 모델로 교체) · NER on/off p95 지연(각 20회) 측정(DESIGN Phase 4 item 6).
+- 로컬 NER E2E: `docker compose -f docker-compose.yml -f docker-compose.test.yml --profile ner up -d --build` + guardrail 정책 `with-ner.yaml` + `KPII_NER_E2E=1 pytest -m integration`.
