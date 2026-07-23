@@ -22,14 +22,18 @@ from ..validators import (
 
 # --- 패턴 (숫자 연속 오매치 방지를 위해 (?<!\d)/(?!\d) 경계 사용) ---
 _RRN = re.compile(r"(?<!\d)\d{6}[-\s·.]?[1-8]\d{6}(?!\d)")
-_MOBILE = re.compile(r"(?<!\d)01[016789][-.\s]?\d{3,4}[-.\s]?\d{4}(?!\d)")
+# 모바일: 국내(010…) + 국제표기(+82 10…, 앞 0 생략) 모두 (B: eval 로 국제표기 미탐 확인 후 추가)
+_MOBILE = re.compile(r"(?<![\d+])(?:\+82[-.\s]?|0)1[016789][-.\s]?\d{3,4}[-.\s]?\d{4}(?!\d)")
+# 유선: 지역번호 괄호 표기((02)…, 02)…) 허용 (B: eval 로 괄호 미탐 확인 후 추가)
 _LANDLINE = re.compile(
-    r"(?<!\d)0(?:2|3[1-3]|4[1-4]|5[1-5]|6[1-4]|70)[-.\s]?\d{3,4}[-.\s]?\d{4}(?!\d)"
+    r"(?<![\d(])\(?0(?:2|3[1-3]|4[1-4]|5[1-5]|6[1-4]|70)\)?[-.\s]?\d{3,4}[-.\s]?\d{4}(?!\d)"
 )
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-_CARD = re.compile(
-    r"(?<!\d)(?:\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}|\d{4}[-\s]?\d{6}[-\s]?\d{5})(?!\d)"
-)
+# 후보: 구분자(공백/하이픈) 허용 13~19자리 숫자열. 확정은 detect_l1 에서 길이+Luhn 게이트.
+_CARD = re.compile(r"(?<![\d\-])\d(?:[ \-]?\d){12,18}(?![\d\-])")
+# 실제 발급되는 PAN 길이만 수용(ISO/IEC 7812: 13~19 중 15=Amex, 16=대부분, 19=Maestro/UnionPay).
+# 13·14자리는 RRN(13)·ISBN-13 등과 충돌하므로 의도적으로 제외(B: eval 로 19자리 미탐 확인 후 추가).
+_CARD_LENGTHS = frozenset({15, 16, 19})
 _DRIVER = re.compile(r"(?<!\d)(?:1[1-9]|2[0-8])[-\s]?\d{2}[-\s]?\d{6}[-\s]?\d{2}(?!\d)")
 _PASSPORT = re.compile(
     r"(?<![A-Za-z0-9])(?:[MSRODG]\d{8}|[MSRODG]\d{3}[A-Z]\d{4})(?![A-Za-z0-9])"
@@ -41,6 +45,7 @@ _CREDENTIAL = (
     re.compile(r"(?<![A-Za-z0-9])AKIA[0-9A-Z]{16}(?![A-Za-z0-9])"),
     re.compile(r"(?<![A-Za-z0-9])ghp_[A-Za-z0-9]{36}(?![A-Za-z0-9])"),
     re.compile(r"(?<![A-Za-z0-9])xox[bpoas]-[A-Za-z0-9\-]{10,}"),
+    re.compile(r"(?<![A-Za-z0-9])AIza[0-9A-Za-z_\-]{35}(?![A-Za-z0-9])"),  # Google API key (B: eval 미탐 확인)
     re.compile(r"-----BEGIN(?: RSA| EC| OPENSSH)? PRIVATE KEY-----"),
 )
 
@@ -73,9 +78,9 @@ def detect_l1(text: str) -> list[Detection]:
         conf = 1.0 if rrn_checksum_valid(d) else 0.8
         out.append(Detection("RRN", m.start(), m.end(), m.group(), conf, "regex"))
 
-    # CARD — Luhn 필수
+    # CARD — 발급 PAN 길이(15/16/19) + Luhn 필수
     for m in _CARD.finditer(text):
-        if not luhn_valid(m.group()):
+        if len(digits_only(m.group())) not in _CARD_LENGTHS or not luhn_valid(m.group()):
             continue
         out.append(Detection("CARD", m.start(), m.end(), m.group(), 1.0, "regex"))
 

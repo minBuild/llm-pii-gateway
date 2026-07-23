@@ -55,6 +55,14 @@ def gen_card(base15: str = "453212345678901", hyphen: bool = True) -> str:
     return f"{n[0:4]}-{n[4:8]}-{n[8:12]}-{n[12:16]}" if hyphen else n
 
 
+def gen_card19(base18: str = "123456789012345678", grouped: bool = False) -> str:
+    """19자리 카드(Maestro/UnionPay 등). grouped=True 면 4-4-4-4-3 표기."""
+    n = base18 + str(_luhn_check_digit(base18))
+    if not grouped:
+        return n
+    return f"{n[0:4]}-{n[4:8]}-{n[8:12]}-{n[12:16]}-{n[16:19]}"
+
+
 def gen_brn(base9: str = "123456789") -> str:
     n = base9 + str(_brn_check(base9))
     return f"{n[0:3]}-{n[3:5]}-{n[5:10]}"
@@ -81,9 +89,13 @@ def positives() -> list[tuple[str, str]]:
         ("연락처 010-1234-5678 로 연락 주세요.", "PHONE"),
         ("전화 01098765432 입니다.", "PHONE"),
         ("사무실 02-123-4567 로 전화 주세요.", "PHONE"),
+        ("국제표기 +82 10-1234-5678 로 연락", "PHONE"),      # B: 국제표기
+        ("서울 (02)123-4567 내선 문의", "PHONE"),            # B: 괄호 지역번호
         ("이메일 hong@example.com 으로 보내주세요.", "EMAIL"),
         (f"카드번호 {gen_card()} 로 결제했습니다.", "CARD"),
         (f"카드 {gen_card(hyphen=False)} 승인", "CARD"),
+        (f"해외카드 {gen_card19()} 결제 완료", "CARD"),              # B: 19자리(연속)
+        (f"카드 {gen_card19(grouped=True)} 승인", "CARD"),          # B: 19자리(4-4-4-4-3)
         ("운전면허 11-23-123456-78 소지 중.", "DRIVER_LICENSE"),
         ("여권번호 M12345678 입니다.", "PASSPORT"),
         ("여권 M123A4567 발급 완료.", "PASSPORT"),
@@ -92,6 +104,7 @@ def positives() -> list[tuple[str, str]]:
         ("api key: sk-abcdefghijklmnopqrstuvwxyz012345 노출됨", "CREDENTIAL"),
         ("AWS AKIAIOSFODNN7EXAMPLE 유출 주의", "CREDENTIAL"),
         ("토큰 ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 확인", "CREDENTIAL"),
+        ("구글키 AIza" + "B" * 35 + " 유출", "CREDENTIAL"),   # B: Google API key
     ]
 
 
