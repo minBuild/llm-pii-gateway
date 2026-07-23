@@ -20,7 +20,7 @@
 - [x] `metadata.kpii_mapping` 가 pre_call → post 훅까지 유지됨(응답 복원이 E2E로 동작 = 확인).
 - [x] ProxyException 직렬화: `{"error": {message, type, param, code}}`. **openai_code 는 본문에 노출 안 됨**, `code` 엔 HTTP 상태("400"). → PII 차단 식별 마커 `[pii_blocked]` 를 message 에 포함.
 - [x] guardrail 모듈 로드: litellm `get_instance_fn` 은 **config 파일 디렉터리 기준**으로 `custom_guardrails/kpii_guardrail.py` 로드(PYTHONPATH 아님). config 와 custom_guardrails/ 를 같은 디렉터리에 둘 것(도커 /app, 로컬은 repo 루트 config).
-- [ ] `turn_off_message_logging` / `store_prompts_in_spend_logs` 무유출 — Phase 5 무유출 테스트로 강제(미검증).
+- [x] `turn_off_message_logging` 무유출 — 무도커 하니스로 라이브 litellm 로그에 원문 PII(전화/이메일/RRN) 없음 확인. (`store_prompts_in_spend_logs`=false; postgres spend 테이블 grep 은 로컬 도커 단계.)
 
 **무도커 로컬 E2E 방법**(compose 없이): `pip install -e ".[proxy]"` → fake upstream `uvicorn tests.fake_upstream.app:app --port 9000` → repo 루트에 config(mode:[pre_call,post_call], mock-model→127.0.0.1:9000, master_key) 두고 `litellm --config <repo>/config.yaml --port 4000` → `GATEWAY_URL=... FAKE_UPSTREAM_URL=... pytest -m integration`.
 
@@ -35,6 +35,7 @@
 - 2026-07-22 Phase 2: litellm 은 proxy extra(`pip install -e ".[proxy]"`)로 분리 — 코어 단위테스트는 litellm 없이 통과.
 - 2026-07-22 Phase 3: 응답 복원 — `async_post_call_success_hook`(비스트리밍) + `async_post_call_streaming_iterator_hook`(스트리밍, StreamRestorer). 매핑 없으면 버퍼링 없이 통과. `metadata.kpii_mapping` 이 pre_call→post 훅까지 유지되는지는 라이브 프록시 확인 항목(상단 체크리스트). 스트리밍은 단일 choice(n=1) 가정.
 - 2026-07-22 Phase 4: L2(NER) — 비동기 `PresidioClient`(HTTP `/analyze`) + `engine.scan_async` + `openai_gateway.process_request_async`(필드별 NER 동시 호출). guardrail 은 `policy.ner.enabled` 시 async 경로. NER 실패는 `NerUnavailable` → `on_failure=block`이면 ProxyException 503, `degrade`면 경고 후 L1만. 오프라인 12건(모킹) 통과. **실제 Presidio E2E는 이 환경 미실행**(모델이 무거움) — Phase 2/3와 달리 라이브 NER 미검증.
+- 2026-07-23 Phase 5: 감사 로거(`kpii.audit` JSONL, 원문/위치 없음) + Prometheus 메트릭(`kpii_*`, prometheus_client 옵션, `KPII_METRICS_PORT` 로 노출). 무유출: 컴포넌트 테스트(test_no_leak) + 무도커 하니스로 **라이브 litellm 로그 grep(원문 없음 확인)**. guardrail 에서 지연 측정(scan_latency_ms). audit `ner_degraded` 플래그는 아직 미스레드(근사값) — 백로그. operations/onboarding 문서 작성.
 
 ## Presidio 사이드카 — 로컬 확인 필요 (Phase 4)
 - [ ] presidio-analyzer 이미지 태그 고정 + NLP 설정 파일 로드 경로/환경변수/포트(3000?) — 이미지 버전마다 다름.

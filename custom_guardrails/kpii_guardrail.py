@@ -10,12 +10,14 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
 from litellm.integrations.custom_guardrail import CustomGuardrail
 from litellm.proxy._types import ProxyException
 
-from kpii.audit import event_from_result
+from kpii import metrics
+from kpii.audit import event_from_result, log_event
 from kpii.masking import MaskingSession, StreamRestorer, restore
 from kpii.openai_gateway import process_request, process_request_async
 from kpii.policy import Policy
@@ -56,29 +58,40 @@ class KoreanPIIGuardrail(CustomGuardrail):
                 self.policy.ner.api_base, self.policy.ner.timeout_ms
             )
         super().__init__(**kwargs)
+        # 선택: KPII_METRICS_PORT 설정 시 사이드 포트로 /metrics 노출
+        port = os.environ.get("KPII_METRICS_PORT")
+        if port:
+            try:
+                metrics.start_server(int(port))
+            except Exception:  # 이미 기동됐거나 포트 사용 중이면 무시
+                pass
 
     def _emit_audit(self, event) -> None:
-        # Phase 5: §7.1 JSONL stdout 기록 + 메트릭. 지금은 생성 지점만(소비 안 함).
-        return None
+        # §7.1 JSONL 기록 (kpii.audit 로거). 원문/매핑/위치 없음.
+        log_event(event)
 
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         try:
             session = MaskingSession()
+            t0 = time.perf_counter()
             if self.policy.ner.enabled and self._ner_client is not None:
                 result = await process_request_async(data, self.policy, session, self._ner_client)
             else:
                 result = process_request(data, self.policy, session)
+            latency_s = time.perf_counter() - t0
 
-            # 감사 이벤트 생성 지점 (로거 연결은 Phase 5 — no-op sink)
-            self._emit_audit(
-                event_from_result(
-                    request_id=str(data.get("litellm_call_id") or ""),
-                    endpoint=str(call_type),
-                    result=result,
-                    model=data.get("model"),
-                    stream=bool(data.get("stream")),
-                )
+            # 감사 이벤트 + 메트릭 (원문 없이 카운트/타입/지연만 — §7 무유출)
+            event = event_from_result(
+                request_id=str(data.get("litellm_call_id") or ""),
+                endpoint=str(call_type),
+                result=result,
+                model=data.get("model"),
+                stream=bool(data.get("stream")),
+                ner_used=self.policy.ner.enabled and self._ner_client is not None,
+                scan_latency_ms=round(latency_s * 1000, 2),
             )
+            self._emit_audit(event)
+            metrics.record_scan(result, lambda e: self.policy.action_for(e).value, latency_s)
 
             if result.blocked:
                 labels = ", ".join(

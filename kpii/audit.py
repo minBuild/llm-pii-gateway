@@ -8,7 +8,13 @@ Phase 2에서는 dataclass 정의 + 생성만 담당한다. stdout JSONL 로거 
 
 from __future__ import annotations
 
+import datetime
+import json
+import logging
 from dataclasses import asdict, dataclass, field
+
+# 감사 로거. 앱/어댑터가 stdout StreamHandler 를 붙인다(수집은 표준 파이프라인에 위임).
+audit_logger = logging.getLogger("kpii.audit")
 
 
 @dataclass
@@ -58,3 +64,10 @@ def event_from_result(
         image_passthrough=result.image_passthrough,
         scan_latency_ms=scan_latency_ms,
     )
+
+
+def log_event(event: AuditEvent, logger: logging.Logger | None = None) -> None:
+    """감사 이벤트를 JSONL 한 줄로 기록(§7.1). 원문/매핑/위치는 애초에 이벤트에 없다."""
+    if event.ts is None:
+        event.ts = datetime.datetime.now().astimezone().isoformat()
+    (logger or audit_logger).info(json.dumps(event.to_dict(), ensure_ascii=False))

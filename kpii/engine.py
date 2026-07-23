@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 
+from . import metrics
 from .detectors import detect_l1
 from .policy import Policy
 from .types import Action, Detection, NerUnavailable
@@ -49,7 +50,7 @@ async def scan_async(text: str, policy: Policy, ner_client=None) -> list[Detecti
             if policy.ner.on_failure == "block":
                 raise
             _logger.warning("NER 사이드카 불가 — L1 결과만으로 degrade 진행")
-            # TODO(Phase 5): kpii_ner_failures_total 메트릭 증가
+            metrics.incr_ner_failure()
     dets = [d for d in dets if policy.action_for(d.entity) is not Action.OFF]
     return merge(dets)
 
