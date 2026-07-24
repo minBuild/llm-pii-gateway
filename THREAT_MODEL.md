@@ -110,7 +110,7 @@ flowchart LR
 | **I3** | 역매핑(A2) 탈취로 마스킹 역산 | A2 | LLM02 | 낮음·높음 | 매핑은 **요청 스코프**(`MaskingSession.mapping`), `data["metadata"]`에만 저장하고 **싱글턴 guardrail `self`엔 절대 안 올림**(`kpii_guardrail.py:async_pre_call_hook`) — 영속화(DB/Redis/파일/로그) 금지 | R8 |
 | **I4** | 교차 요청 매핑 오적용(다른 요청의 PII가 응답에 노출) | A1 | LLM02 | 낮음·높음 | 매핑을 요청별 `metadata`에서만 조회(`_mapping_from`) — 인스턴스 공유 상태 없음(불변식 §6) | — |
 | **I5** | 마스킹 후에도 프로바이더가 잔여 문맥·불완전 마스킹 보존 | A1 | LLM02 | 중간·중간 | 차단 대상(RRN/크리덴셜 등)은 마스킹이 아니라 **요청 자체 차단**(`_finalize` block 경로) | R1 |
-| **I6** | 스트리밍 청크 경계로 placeholder가 쪼개져 복원 실패 | A1 | LLM05 | 낮음·중간 | 슬라이딩 버퍼 복원(`masking.py:StreamRestorer.push/flush`) — 종료 청크에서 잔여 방출 | R6 |
+| **I6** | 스트리밍 청크 경계로 placeholder가 쪼개져 복원 실패 | A1 | LLM05 | 낮음·중간 | 슬라이딩 버퍼 복원(`masking.py:StreamRestorer.push/flush`), `choice.index` 별 독립 복원기로 n>1 지원 | R6 |
 | **I7** | 관측 측면 채널 — 엔티티별 탐지 카운트로 PII **존재/종류** 추론(값은 아님) | A1 | — | 낮음·낮음 | 메트릭은 타입·수만 노출 | R7(수용) |
 
 ### 5.2 Denial of Service
@@ -119,7 +119,7 @@ flowchart LR
 |---|---|---|---|---|---|---|
 | **D1** | 악성 입력으로 정규식 백트래킹(ReDoS) → 게이트웨이 행 | A4 | LLM10 | 중간·중간 | 패턴은 **경계 있는 수량자**(`{n,m}`)·단일 문자클래스 위주로 검토(카드 후보 `\d(?:[ \-]?\d){12,18}` 등) | **R4** |
 | **D2** | NER 사이드카 과부하 → **degrade(fail-open)면 L1만으로 저하** → 유출 확률↑ | A4→A1 | LLM10 | 중간·높음 | 정책 선택: `ner.on_failure=block`이면 503 차단(`engine.scan_async`, `kpii_guardrail.py`) | **R3** |
-| **D3** | 초대형 입력으로 스캔 자원 고갈 | A4 | LLM10 | 중간·중간 | (입력 길이 상한 미구현) | **R4** |
+| **D3** | 초대형 입력으로 스캔 자원 고갈 | A4 | LLM10 | 낮음·중간 | `max_scan_chars` 정책 가드 — 초과 시 413 차단(`openai_gateway._oversized`) | **R4** |
 
 ### 5.3 Tampering / Spoofing / Repudiation / Elevation
 
@@ -128,7 +128,7 @@ flowchart LR
 | **T1** | Tampering | 정책 YAML/환경변수 변조로 마스킹 비활성화 | A1 | 낮음·높음 | 배포 시 설정 무결성 가정(§4); 기본정책은 RRN/크리덴셜 block | 배포 통제 |
 | **S1** | Spoofing | 인증 미설정 시 오픈 프록시 → 업스트림 키 남용 | A3 | 중간·높음 | LiteLLM `master_key`/virtual key 사용 가정(§4) | 배포 통제 |
 | **R1r** | Repudiation | 감사 누락으로 유출 추적 불가 | A5 | 낮음·중간 | 모든 요청에 감사 이벤트(`kpii_guardrail.py:_emit_audit`) | 감사 싱크 보존은 인프라 |
-| **E1** | EoP/우회 | **스캔 안 하는 필드**에 PII를 실어 우회 | A1 | 중간·높음 | 주요 필드 커버(`openai_gateway.py:_iter_scan_fields` — messages/tool_calls args/prompt/embeddings) | **R5** |
+| **E1** | EoP/우회 | **스캔 안 하는 필드**에 PII를 실어 우회 | A1 | 낮음·높음 | 주요 필드 커버(`_iter_scan_fields` — messages·multimodal `text`/`input_text`·tool_calls args·prompt·embeddings) | **R5** |
 | **E2** | 내부오류 우회 | 크래시 유발 입력 + `on_internal_error=degrade`(fail-open)로 통과 | A1 | 중간·높음 | 기본 fail-closed 선택 가능(`kpii_guardrail.py` except 절) | **R3** |
 
 ---
@@ -153,10 +153,10 @@ flowchart LR
 |---|---|---|---|---|
 | **R1** | 적대적 회피(난독화·인코딩·스크립트 혼용·턴 분할) | 중간 (↓높음) | **부분완화 완료** — 입력 정규화(`normalize.py`: NFKC+보이지않는문자 제거)로 전각·원형숫자·제로폭·소프트하이픈 방어(적대적 하니스 `tests/util/adversarial.py`로 4벡터 12/12 복구 측정). **잔여**: 낱자 공백분리·한글표기("공일공")·base64·스크립트혼용 호모글리프(키릴) | 잔여는 정밀도 리스크가 커 별도 대응 — 신뢰도 임계·L2 NER 강화·(인코딩)디코드 휴리스틱 |
 | **R2** | 프롬프트 인젝션/탈옥 | 중간 (↓높음) | **부분완화 완료** — 휴리스틱 탐지 `kpii/injection.py`(카테고리: OVERRIDE·EXFIL·ROLE·SUPPRESS·ENCODING·DELIM, 한/영, 정규화 전처리 재사용). 기본 `log_only`(관측), 정책으로 `block`. 벤치마크 `tests/util/injection_eval.py` 재현율/정밀도 ≈ 0.93/0.93. **잔여**: 의역·신규표현·간접 인젝션·use-vs-mention·타 언어 | 잔여는 임계·룰만으론 한계 — 경량 분류기(fine-tuned) 또는 LLM 심판 도입이 다음 단계 |
-| **R3** | degrade/on_internal_error = fail-open | 중간 | 정책으로 선택 가능 | 민감 엔티티(RRN/크리덴셜)는 degrade에서도 **L1 차단 유지**(부분 fail-closed) |
-| **R4** | ReDoS·초대형 입력 자원 고갈 | 중간 | 경계 정규식만 | 입력 길이 상한 + 정규식 실행 타임아웃(defense-in-depth) |
-| **R5** | 비스캔 필드로 우회(E1) | 중간 | 주요 필드만 커버 | 스캔 대상 확장 + 미지 필드 **deny-by-default** 검토 |
-| **R6** | n>1 스트리밍 응답 복원(choices[0]만) | 낮음(정합성) | n=1 가정 | 멀티 choice 복원 |
+| **R3** | 필터 fail-open (관측 실패·내부 오류) | 중간→낮음 | **부분완화 완료**: 관측(감사/메트릭)을 격리해 그 실패가 차단/마스킹 결정을 무력화하지 못하게 함(`kpii_guardrail.async_pre_call_hook`, `test_r3_observability_failure_does_not_prevent_block`) | 잔여: scan 엔진 자체 실패 시 `on_internal_error=allow`는 **설계상** fail-open — 민감 환경은 `block` 권장 |
+| **R4** | 초대형 입력 자원 고갈 (LLM10) | 낮음 | **완화 완료**: `max_scan_chars` 가드(정책, 초과 시 413 차단, `openai_gateway._oversized`). 정규식은 선형(경계 수량자, 파국적 백트래킹 없음) 확인 | 잔여: 기본 off(운영자가 상한 설정) |
+| **R5** | 비스캔 필드로 우회(E1) | 중간→낮음 | **부분완화 완료**: `input_text`(Responses API) 파트도 스캔(`_iter_scan_fields`) — messages·multimodal text·tool_calls args·prompt·embeddings 커버 | 잔여: 미지 신규 필드 deny-by-default 미도입 |
+| **R6** | n>1 스트리밍 응답 복원 | 해결 | **완료**: `choice.index` 별 독립 복원기로 다중 choice 복원(`async_post_call_streaming_iterator_hook`) | — |
 | **R7** | 관측 측면 채널(엔티티 카운트) | 낮음 | 값 미노출 | 수용(문서화). 필요 시 집계 노이즈 |
 | **R8** | 프로세스 메모리 내 매핑 노출 | 낮음 | 요청 스코프·미영속 | 수용(호스트 격리 가정). 조기 파기 검토 |
 

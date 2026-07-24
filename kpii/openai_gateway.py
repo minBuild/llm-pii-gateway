@@ -27,6 +27,7 @@ from .policy import Policy
 from .types import Action
 
 _INJECTION_MARKER = "PROMPT_INJECTION"   # 인젝션 차단 시 block_entities 에 넣는 합성 마커
+_OVERSIZED_MARKER = "OVERSIZED_INPUT"    # 입력 길이 초과 차단 마커 (R4)
 
 # 텍스트 필드 하나: 현재 값 + 마스킹 결과를 되쓸 setter
 _Field = tuple[str, Callable[[str], None]]
@@ -70,7 +71,8 @@ def _iter_scan_fields(body: dict) -> tuple[list[_Field], bool]:
                     if not isinstance(part, dict):
                         continue
                     ptype = part.get("type")
-                    if ptype == "text" and isinstance(part.get("text"), str):
+                    # "text"(chat) + "input_text"(Responses API) 둘 다 스캔 (R5: 필드 커버리지)
+                    if ptype in ("text", "input_text") and isinstance(part.get("text"), str):
                         fields.append((part["text"], _setter(part, "text")))
                     elif ptype in ("image_url", "input_image", "image"):
                         image_seen = True   # 이미지는 통과(§5.5)
@@ -110,9 +112,28 @@ def _scan_injection(fields: list[_Field], policy: Policy) -> InjectionResult:
     return InjectionResult(score, tuple(sorted(cats)))
 
 
+def _oversized(fields: list[_Field], policy: Policy) -> bool:
+    """정책상 최대 스캔 길이를 초과하는 필드가 있는지 (R4, 0=무제한)."""
+    cap = policy.max_scan_chars
+    return cap > 0 and any(len(text) > cap for text, _ in fields)
+
+
+def _blocked_oversized(image_passthrough: bool) -> ProcessResult:
+    """길이 초과로 스캔을 보장할 수 없어 fail-closed 차단 (본문 미전송)."""
+    return ProcessResult(
+        blocked=True,
+        block_entities=[_OVERSIZED_MARKER],
+        detections={},
+        actions={"masked": 0, "blocked": 0, "log_only": 0},
+        image_passthrough=image_passthrough,
+    )
+
+
 def process_request(body: dict, policy: Policy, session: MaskingSession) -> ProcessResult:
     """L1 전용(동기). NER 비활성 경로. 본문을 in-place 로 마스킹/차단."""
     fields, image_passthrough = _iter_scan_fields(body)
+    if _oversized(fields, policy):
+        return _blocked_oversized(image_passthrough)
     scanned = [(text, setter, scan(text, policy)) for text, setter in fields]
     injection = _scan_injection(fields, policy)
     return _finalize(scanned, policy, session, image_passthrough, injection)
@@ -127,6 +148,8 @@ async def process_request_async(
     전파한다(어댑터가 503 차단).
     """
     fields, image_passthrough = _iter_scan_fields(body)
+    if _oversized(fields, policy):
+        return _blocked_oversized(image_passthrough)
     dets_per_field = await asyncio.gather(
         *(scan_async(text, policy, ner_client) for text, _ in fields)
     )

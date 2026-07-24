@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import Any
@@ -38,7 +39,9 @@ _ENTITY_LABELS = {
     "PROMPT_INJECTION": "프롬프트 인젝션 의심",
 }
 INJECTION_MARKER = "PROMPT_INJECTION"
+OVERSIZED_MARKER = "OVERSIZED_INPUT"
 MAPPING_KEY = "kpii_mapping"
+_logger = logging.getLogger("kpii")
 _DEFAULT_POLICY = "/app/policies/default.yaml"
 
 
@@ -82,47 +85,57 @@ class KoreanPIIGuardrail(CustomGuardrail):
                 result = process_request(data, self.policy, session)
             latency_s = time.perf_counter() - t0
 
-            # 감사 이벤트 + 메트릭 (원문 없이 카운트/타입/지연만 — §7 무유출)
-            event = event_from_result(
-                request_id=str(data.get("litellm_call_id") or ""),
-                endpoint=str(call_type),
-                result=result,
-                model=data.get("model"),
-                stream=bool(data.get("stream")),
-                ner_used=self.policy.ner.enabled and self._ner_client is not None,
-                scan_latency_ms=round(latency_s * 1000, 2),
-            )
-            self._emit_audit(event)
-            metrics.record_scan(result, lambda e: self.policy.action_for(e).value, latency_s)
-            if (
-                self.policy.injection.enabled
-                and result.injection_score >= self.policy.injection.threshold
-            ):
-                metrics.incr_injection(self.policy.injection.action)
+            # 관측(감사/메트릭)은 §7 무유출로 카운트/타입/지연만 기록한다. 그리고 **필터 결정에
+            # 영향을 주면 안 된다** — 관측이 실패해도 차단/마스킹은 그대로 집행된다(R3: fail-open 방지).
+            try:
+                event = event_from_result(
+                    request_id=str(data.get("litellm_call_id") or ""),
+                    endpoint=str(call_type),
+                    result=result,
+                    model=data.get("model"),
+                    stream=bool(data.get("stream")),
+                    ner_used=self.policy.ner.enabled and self._ner_client is not None,
+                    scan_latency_ms=round(latency_s * 1000, 2),
+                )
+                self._emit_audit(event)
+                metrics.record_scan(result, lambda e: self.policy.action_for(e).value, latency_s)
+                if (
+                    self.policy.injection.enabled
+                    and result.injection_score >= self.policy.injection.threshold
+                ):
+                    metrics.incr_injection(self.policy.injection.action)
+            except Exception:
+                _logger.warning("감사/메트릭 기록 실패 — 필터 결정에는 영향 없음", exc_info=True)
 
             if result.blocked:
-                # litellm ProxyException 은 openai_code 를 응답 본문에 노출하지 않고 code 엔 HTTP
-                # 상태(400)를 넣는다(라이브 확인). 클라이언트가 차단 사유를 기계적으로 식별하도록
-                # 안정 마커를 메시지에 포함한다: PII 는 [pii_blocked], 인젝션 단독은 [injection_blocked].
-                pii_ents = [e for e in result.block_entities if e != INJECTION_MARKER]
+                # litellm ProxyException 은 openai_code 를 본문에 노출하지 않고 code 엔 HTTP 상태를
+                # 넣는다(라이브 확인). 클라이언트가 차단 사유를 기계적으로 식별하도록 안정 마커를
+                # 메시지에 포함: PII=[pii_blocked], 인젝션=[injection_blocked], 길이초과=[oversized_input].
+                special = {INJECTION_MARKER, OVERSIZED_MARKER}
+                pii_ents = [e for e in result.block_entities if e not in special]
                 if pii_ents:
                     labels = ", ".join(f"{e}({_ENTITY_LABELS.get(e, e)})" for e in pii_ents)
                     message = (
                         f"[pii_blocked] 요청에 차단 대상 민감정보가 포함되어 있습니다: {labels}. "
                         "해당 값을 제거한 뒤 다시 시도하세요."
                     )
-                    marker = "pii_blocked"
+                    marker, code = "pii_blocked", 400
+                elif OVERSIZED_MARKER in result.block_entities:
+                    message = (
+                        "[oversized_input] 요청 본문이 정책상 최대 스캔 길이를 초과하여 차단되었습니다."
+                    )
+                    marker, code = "oversized_input", 413
                 else:
                     message = (
                         "[injection_blocked] 요청에서 프롬프트 인젝션 의심 패턴이 감지되어 "
                         "정책상 차단되었습니다."
                     )
-                    marker = "injection_blocked"
+                    marker, code = "injection_blocked", 400
                 raise ProxyException(
                     message=message,
                     type="invalid_request_error",
                     param=None,
-                    code=400,
+                    code=code,
                     openai_code=marker,
                 )
 
@@ -175,21 +188,26 @@ class KoreanPIIGuardrail(CustomGuardrail):
 
     async def async_post_call_streaming_iterator_hook(self, user_api_key_dict, response, request_data):
         # 스트리밍 복원: 델타를 StreamRestorer 로 통과. 매핑 없으면 버퍼링 없이 통과(지연 0).
-        # 단일 choice(n=1) 가정 — 스트리밍 복원의 일반 케이스.
+        # choice.index 별로 독립 복원기를 둬 n>1 스트리밍도 각 choice 를 복원한다 (R6).
         mapping = self._mapping_from(request_data)
         if not mapping:
             async for chunk in response:
                 yield chunk
             return
-        restorer = StreamRestorer(mapping)
+        restorers: dict[int, StreamRestorer] = {}
         async for chunk in response:
-            choices = getattr(chunk, "choices", None) or []
-            if choices:
-                delta = getattr(choices[0], "delta", None)
-                content = getattr(delta, "content", None) if delta is not None else None
+            for choice in getattr(chunk, "choices", None) or []:
+                delta = getattr(choice, "delta", None)
+                if delta is None:
+                    continue
+                idx = getattr(choice, "index", 0) or 0
+                restorer = restorers.get(idx)
+                if restorer is None:
+                    restorer = restorers[idx] = StreamRestorer(mapping)
+                content = getattr(delta, "content", None)
                 if isinstance(content, str) and content:
                     delta.content = restorer.push(content)
-                if delta is not None and getattr(choices[0], "finish_reason", None) is not None:
+                if getattr(choice, "finish_reason", None) is not None:
                     leftover = restorer.flush()      # 종료 청크에 남은 버퍼 방출
                     if leftover:
                         delta.content = (getattr(delta, "content", None) or "") + leftover

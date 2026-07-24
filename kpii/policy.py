@@ -39,6 +39,7 @@ class Policy:
     on_internal_error: str  # "block" | "allow"
     ner: NerConfig
     injection: InjectionConfig = InjectionConfig()
+    max_scan_chars: int = 0   # 필드당 최대 스캔 길이(0=무제한). 초과 시 요청 차단(413). THREAT_MODEL R4
 
     def action_for(self, entity: str) -> Action:
         return self.entities.get(entity, self.default_action)
@@ -89,7 +90,13 @@ class Policy:
             action=inj_action,
             threshold=int(inj_raw.get("threshold", 2)),
         )
-        return cls(version, default_action, entities, on_internal_error, ner, injection)
+
+        max_scan_chars = int(data.get("max_scan_chars", 0))
+        if max_scan_chars < 0:
+            raise ValueError(f"max_scan_chars 는 0 이상이어야 합니다: {max_scan_chars}")
+        return cls(
+            version, default_action, entities, on_internal_error, ner, injection, max_scan_chars
+        )
 
 
 def _parse_action(value: object, where: str) -> Action:
