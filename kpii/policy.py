@@ -11,6 +11,7 @@ from .types import Action
 
 _VALID_ON_ERROR = {"block", "allow"}
 _VALID_NER_FAILURE = {"degrade", "block"}
+_VALID_INJECTION_ACTION = {"block", "log_only"}
 
 
 @dataclass(frozen=True)
@@ -22,12 +23,22 @@ class NerConfig:
 
 
 @dataclass(frozen=True)
+class InjectionConfig:
+    """프롬프트 인젝션 휴리스틱 정책. action=log_only 가 기본(관측 우선, FP 피해 최소화)."""
+
+    enabled: bool = False
+    action: str = "log_only"   # block | log_only
+    threshold: int = 2         # injection.detect_injection 점수 임계
+
+
+@dataclass(frozen=True)
 class Policy:
     version: int
     default_action: Action
     entities: dict[str, Action]
     on_internal_error: str  # "block" | "allow"
     ner: NerConfig
+    injection: InjectionConfig = InjectionConfig()
 
     def action_for(self, entity: str) -> Action:
         return self.entities.get(entity, self.default_action)
@@ -66,7 +77,19 @@ class Policy:
             timeout_ms=int(ner_raw.get("timeout_ms", 300)),
             on_failure=on_failure,
         )
-        return cls(version, default_action, entities, on_internal_error, ner)
+
+        inj_raw = data.get("injection") or {}
+        inj_action = str(inj_raw.get("action", "log_only")).lower()
+        if inj_action not in _VALID_INJECTION_ACTION:
+            raise ValueError(
+                f"injection.action 는 {sorted(_VALID_INJECTION_ACTION)} 중 하나여야 합니다: {inj_action!r}"
+            )
+        injection = InjectionConfig(
+            enabled=bool(inj_raw.get("enabled", False)),
+            action=inj_action,
+            threshold=int(inj_raw.get("threshold", 2)),
+        )
+        return cls(version, default_action, entities, on_internal_error, ner, injection)
 
 
 def _parse_action(value: object, where: str) -> Action:

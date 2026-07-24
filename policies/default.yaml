@@ -18,3 +18,7 @@ ner:
   api_base: http://presidio-analyzer:3000
   timeout_ms: 300
   on_failure: degrade         # degrade(L1만으로 진행+경고) | block
+injection:                    # 프롬프트 인젝션 휴리스틱 (THREAT_MODEL R2)
+  enabled: true
+  action: log_only            # log_only(관측·기본) | block. 휴리스틱이라 오탐 피해 최소화 위해 기본 관측
+  threshold: 2                # detect_injection 점수 임계(강신호 1개 또는 약신호 2개)

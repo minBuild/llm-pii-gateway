@@ -19,3 +19,7 @@ ner:
   api_base: http://presidio-analyzer:3000
   timeout_ms: 300
   on_failure: degrade         # NER 죽어도 L1만으로 진행(가용성 우선). block 으로 바꾸면 503 차단
+injection:                    # 프롬프트 인젝션 휴리스틱 (THREAT_MODEL R2)
+  enabled: true
+  action: block               # 엄격 포스처: 임계 이상이면 요청 차단([injection_blocked])
+  threshold: 2

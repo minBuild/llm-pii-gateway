@@ -30,6 +30,8 @@ class AuditEvent:
     ner_used: bool = False
     ner_degraded: bool = False
     image_passthrough: bool = False
+    injection_score: int = 0                                   # 프롬프트 인젝션 점수(원문 없음)
+    injection_categories: list[str] = field(default_factory=list)   # 발화 카테고리만
     scan_latency_ms: float | None = None
     ts: str | None = None                                      # Phase 5 로거에서 채움
 
@@ -62,6 +64,8 @@ def event_from_result(
         ner_used=ner_used,
         ner_degraded=ner_degraded,
         image_passthrough=result.image_passthrough,
+        injection_score=getattr(result, "injection_score", 0),
+        injection_categories=list(getattr(result, "injection_categories", []) or []),
         scan_latency_ms=scan_latency_ms,
     )
 

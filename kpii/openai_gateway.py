@@ -20,10 +20,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .engine import scan, scan_async
+from .injection import InjectionResult, detect_injection
 from .masking import MaskingSession
 from .normalize import normalize_for_detection
 from .policy import Policy
 from .types import Action
+
+_INJECTION_MARKER = "PROMPT_INJECTION"   # 인젝션 차단 시 block_entities 에 넣는 합성 마커
 
 # 텍스트 필드 하나: 현재 값 + 마스킹 결과를 되쓸 setter
 _Field = tuple[str, Callable[[str], None]]
@@ -34,11 +37,13 @@ class ProcessResult:
     """요청 처리 결과. mapping 에는 PII 원문이 있으므로 로그/저장 금지(D4)."""
 
     blocked: bool
-    block_entities: list[str]              # 차단된 엔티티 타입(원문 없음)
+    block_entities: list[str]              # 차단된 엔티티 타입(원문 없음). 인젝션은 PROMPT_INJECTION 마커
     detections: dict[str, int]             # 엔티티별 탐지 수(감사용)
     actions: dict[str, int]                # {"masked","blocked","log_only"} 카운트
     image_passthrough: bool = False
     mapping: dict[str, str] = field(default_factory=dict)
+    injection_score: int = 0               # 프롬프트 인젝션 점수(0=신호 없음)
+    injection_categories: list[str] = field(default_factory=list)   # 발화 카테고리(원문 없음)
 
 
 def _setter(container: dict | list, key) -> Callable[[str], None]:
@@ -92,11 +97,25 @@ def _iter_scan_fields(body: dict) -> tuple[list[_Field], bool]:
     return fields, image_seen
 
 
+def _scan_injection(fields: list[_Field], policy: Policy) -> InjectionResult:
+    """정책상 인젝션 탐지 활성 시 모든 필드에서 최고 점수/카테고리 합집합을 낸다."""
+    if not policy.injection.enabled:
+        return InjectionResult(0, ())
+    score = 0
+    cats: set[str] = set()
+    for text, _ in fields:
+        r = detect_injection(text)
+        score = max(score, r.score)
+        cats |= set(r.categories)
+    return InjectionResult(score, tuple(sorted(cats)))
+
+
 def process_request(body: dict, policy: Policy, session: MaskingSession) -> ProcessResult:
     """L1 전용(동기). NER 비활성 경로. 본문을 in-place 로 마스킹/차단."""
     fields, image_passthrough = _iter_scan_fields(body)
     scanned = [(text, setter, scan(text, policy)) for text, setter in fields]
-    return _finalize(scanned, policy, session, image_passthrough)
+    injection = _scan_injection(fields, policy)
+    return _finalize(scanned, policy, session, image_passthrough, injection)
 
 
 async def process_request_async(
@@ -114,7 +133,8 @@ async def process_request_async(
     scanned = [
         (text, setter, dets) for (text, setter), dets in zip(fields, dets_per_field)
     ]
-    return _finalize(scanned, policy, session, image_passthrough)
+    injection = _scan_injection(fields, policy)
+    return _finalize(scanned, policy, session, image_passthrough, injection)
 
 
 def _finalize(
@@ -122,15 +142,21 @@ def _finalize(
     policy: Policy,
     session: MaskingSession,
     image_passthrough: bool,
+    injection: InjectionResult = InjectionResult(0, ()),
 ) -> ProcessResult:
     """스캔 결과(필드별)로 BLOCK 검사 → MASK 적용 → 결과 반환 (§5.4).
 
-    BLOCK 엔티티가 하나라도 있으면 본문을 **변형하지 않고** blocked 결과를 돌려준다.
+    BLOCK 엔티티(또는 정책상 인젝션 차단)가 하나라도 있으면 본문을 **변형하지 않고**
+    blocked 결과를 돌려준다. 인젝션은 PROMPT_INJECTION 마커로 block_entities 에 합류한다.
     """
     detections: Counter[str] = Counter()
     for _, _, dets in scanned:
         detections.update(d.entity for d in dets)
 
+    inj_kwargs = {
+        "injection_score": injection.score,
+        "injection_categories": list(injection.categories),
+    }
     block_entities = sorted(
         {
             d.entity
@@ -139,6 +165,13 @@ def _finalize(
             if policy.action_for(d.entity) is Action.BLOCK
         }
     )
+    if (
+        policy.injection.enabled
+        and injection.flagged(policy.injection.threshold)
+        and policy.injection.action == "block"
+    ):
+        block_entities = block_entities + [_INJECTION_MARKER]
+
     if block_entities:
         return ProcessResult(
             blocked=True,
@@ -146,6 +179,7 @@ def _finalize(
             detections=dict(detections),
             actions={"masked": 0, "blocked": int(sum(detections.values())), "log_only": 0},
             image_passthrough=image_passthrough,
+            **inj_kwargs,
         )
 
     actions: Counter[str] = Counter()
@@ -167,4 +201,5 @@ def _finalize(
         actions={"masked": actions["masked"], "blocked": 0, "log_only": actions["log_only"]},
         image_passthrough=image_passthrough,
         mapping=session.mapping,
+        **inj_kwargs,
     )

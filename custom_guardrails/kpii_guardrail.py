@@ -35,7 +35,9 @@ _ENTITY_LABELS = {
     "BRN": "사업자등록번호",
     "PERSON": "이름",
     "LOCATION": "주소",
+    "PROMPT_INJECTION": "프롬프트 인젝션 의심",
 }
+INJECTION_MARKER = "PROMPT_INJECTION"
 MAPPING_KEY = "kpii_mapping"
 _DEFAULT_POLICY = "/app/policies/default.yaml"
 
@@ -92,23 +94,36 @@ class KoreanPIIGuardrail(CustomGuardrail):
             )
             self._emit_audit(event)
             metrics.record_scan(result, lambda e: self.policy.action_for(e).value, latency_s)
+            if (
+                self.policy.injection.enabled
+                and result.injection_score >= self.policy.injection.threshold
+            ):
+                metrics.incr_injection(self.policy.injection.action)
 
             if result.blocked:
-                labels = ", ".join(
-                    f"{e}({_ENTITY_LABELS.get(e, e)})" for e in result.block_entities
-                )
-                # litellm ProxyException 은 openai_code 를 응답 본문에 노출하지 않고
-                # code 엔 HTTP 상태(400)를 넣는다(라이브 확인). 클라이언트가 PII 차단을
-                # 기계적으로 식별할 수 있도록 안정 마커 'pii_blocked' 를 메시지에 포함한다.
-                raise ProxyException(
-                    message=(
+                # litellm ProxyException 은 openai_code 를 응답 본문에 노출하지 않고 code 엔 HTTP
+                # 상태(400)를 넣는다(라이브 확인). 클라이언트가 차단 사유를 기계적으로 식별하도록
+                # 안정 마커를 메시지에 포함한다: PII 는 [pii_blocked], 인젝션 단독은 [injection_blocked].
+                pii_ents = [e for e in result.block_entities if e != INJECTION_MARKER]
+                if pii_ents:
+                    labels = ", ".join(f"{e}({_ENTITY_LABELS.get(e, e)})" for e in pii_ents)
+                    message = (
                         f"[pii_blocked] 요청에 차단 대상 민감정보가 포함되어 있습니다: {labels}. "
                         "해당 값을 제거한 뒤 다시 시도하세요."
-                    ),
+                    )
+                    marker = "pii_blocked"
+                else:
+                    message = (
+                        "[injection_blocked] 요청에서 프롬프트 인젝션 의심 패턴이 감지되어 "
+                        "정책상 차단되었습니다."
+                    )
+                    marker = "injection_blocked"
+                raise ProxyException(
+                    message=message,
                     type="invalid_request_error",
                     param=None,
                     code=400,
-                    openai_code="pii_blocked",
+                    openai_code=marker,
                 )
 
             # Phase 3 복원용 매핑 전달 (요청 스코프, 저장/로그 금지 — D4)

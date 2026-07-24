@@ -22,6 +22,9 @@ if _ENABLED:
     _blocked = Counter("kpii_blocked_requests_total", "PII 로 차단된 요청 수")
     _latency = Histogram("kpii_scan_latency_seconds", "요청 스캔 지연(초)")
     _ner_failures = Counter("kpii_ner_failures_total", "NER 사이드카 호출 실패 수")
+    _injection = Counter(
+        "kpii_injection_flagged_total", "프롬프트 인젝션으로 플래그된 요청 수 (정책 액션별)", ["action"]
+    )
 
 
 def record_scan(result, action_of: Callable[[str], str], latency_s: float) -> None:
@@ -38,6 +41,12 @@ def record_scan(result, action_of: Callable[[str], str], latency_s: float) -> No
 def incr_ner_failure() -> None:
     if _ENABLED:
         _ner_failures.inc()
+
+
+def incr_injection(action: str) -> None:
+    """인젝션 플래그 발생 시 1 증가(action=block|log_only). 카테고리/원문은 넣지 않음."""
+    if _ENABLED:
+        _injection.labels(action=action).inc()
 
 
 def start_server(port: int) -> bool:
