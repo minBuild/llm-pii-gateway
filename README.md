@@ -93,6 +93,10 @@ make smoke              # GET /health/liveliness
 | `docs/` | 구현 노트·운영/사용 문서 |
 | `DESIGN.md` · `THREAT_MODEL.md` | 설계 / 위협 모델(STRIDE × OWASP LLM Top 10) |
 
-## 향후
+## 벤치마크 & 향후
 
-- JVM(Kotlin/Java 가상 스레드) 포트로 동일 사양 재구현 → 처리량·tail latency 벤치마크 (DESIGN §10.1).
+- **필터 오버헤드·처리량 벤치**: [`bench/`](bench/) — 필터가 요청당 얹는 지연은 최악(heavy)에도
+  p99 ~52µs(LLM 호출 대비 무시 수준). 처리량은 Python(GIL)이 스레드 확장 없이 ~21k ops/s로 평평한
+  반면, JVM 플랫폼 스레드는 18코어에서 ~362k ops/s(~17×)로 선형 확장 — "Python 먼저, 처리량이
+  중요해지면 JVM 포트" 방향을 수치로 뒷받침(DESIGN §10.1).
+- 향후: 전체 사양 JVM(가상 스레드) 포트 + 실게이트웨이 부하시험(업스트림 I/O 동시성).
